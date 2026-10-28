@@ -31,6 +31,16 @@ class _CartScreenState extends State<CartScreen> {
         (sum, item) => sum + item.subtotal,
       );
 
+  void _changeQuantity(int productId, int quantity) {
+    widget.onQuantityChanged(productId, quantity);
+    setState(() {}); // redraw the bag right away
+  }
+
+  void _removeItem(int productId) {
+    widget.onRemove(productId);
+    setState(() {}); // redraw the bag right away
+  }
+
   Future<void> _checkout(List<CartItem> items) async {
     if (_isCheckingOut || items.isEmpty) return;
 
@@ -175,7 +185,7 @@ class _CartScreenState extends State<CartScreen> {
                                           visualDensity:
                                               VisualDensity.compact,
                                           onPressed: item.quantity > 1
-                                              ? () => widget.onQuantityChanged(
+                                              ? () => _changeQuantity(
                                                     product.id,
                                                     item.quantity - 1,
                                                   )
@@ -192,7 +202,7 @@ class _CartScreenState extends State<CartScreen> {
                                           visualDensity:
                                               VisualDensity.compact,
                                           onPressed: () =>
-                                              widget.onQuantityChanged(
+                                              _changeQuantity(
                                             product.id,
                                             item.quantity + 1,
                                           ),
@@ -203,7 +213,7 @@ class _CartScreenState extends State<CartScreen> {
                                           visualDensity:
                                               VisualDensity.compact,
                                           onPressed: () =>
-                                              widget.onRemove(product.id),
+                                              _removeItem(product.id),
                                           icon: const Icon(
                                             Icons.delete_outline,
                                             color: Colors.redAccent,
