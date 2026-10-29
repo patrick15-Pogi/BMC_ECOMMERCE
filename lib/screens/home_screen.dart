@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+
 import '../data/products.dart';
 import '../models/cart_item.dart';
 import '../models/order.dart';
@@ -13,40 +14,51 @@ import 'cart_screen.dart';
 import 'orders_screen.dart';
 import 'product_detail_screen.dart';
 
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+
 class _HomeScreenState extends State<HomeScreen> {
   String selectedCategory = 'All';
   String searchQuery = '';
 
+
   final Map<int, CartItem> cart = {};
+
+
 
 
   int get cartCount =>
       cart.values.fold(0, (sum, item) => sum + item.quantity);
+
 
   List<Product> get filteredProducts {
     return products.where((product) {
       final matchesCategory = selectedCategory == 'All' ||
           product.category == selectedCategory;
 
+
       final query = searchQuery.toLowerCase().trim();
       final matchesSearch = product.name.toLowerCase().contains(query) ||
           product.category.toLowerCase().contains(query) ||
           product.description.toLowerCase().contains(query);
 
+
       return matchesCategory && matchesSearch;
     }).toList();
   }
 
+
   void addToCart(Product product, int quantity, String size) {
     setState(() {
       final existing = cart[product.id];
+
 
       if (existing != null && existing.size == size) {
         existing.quantity += quantity;
@@ -60,6 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+
   void openProduct(Product product) {
     Navigator.push(
       context,
@@ -71,6 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
 
   
 void openCart() {
@@ -96,7 +110,9 @@ void openCart() {
             cart.clear();
           });
 
+
           Navigator.pop(context);
+
 
           ScaffoldMessenger.of(this.context).showSnackBar(
             const SnackBar(
@@ -114,6 +130,8 @@ void openCart() {
 }
 
 
+
+
   
 void openOrders() {
   Navigator.push(
@@ -125,9 +143,12 @@ void openOrders() {
 }
 
 
+
+
   @override
   Widget build(BuildContext context) {
     final visibleProducts = filteredProducts;
+
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -255,6 +276,7 @@ void openOrders() {
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
                               final product = visibleProducts[index];
+
 
                               return ProductCard(
                                 product: product,

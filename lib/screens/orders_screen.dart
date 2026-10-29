@@ -1,20 +1,24 @@
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+
 import '../models/product.dart';
 import '../data/products.dart';
 
+
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
+
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
 }
 
+
 class _OrdersScreenState extends State<OrdersScreen> {
   late Future<List<Map<String, dynamic>>> _ordersFuture;
+
 
   @override
   void initState() {
@@ -22,11 +26,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _ordersFuture = _loadOrders();
   }
 
+
   Future<List<Map<String, dynamic>>> _loadOrders() async {
     final prefs = await SharedPreferences.getInstance();
     final refs = prefs.getStringList('blvk_order_refs') ?? [];
 
+
     if (refs.isEmpty) return [];
+
 
     final response =
         await Supabase.instance.client.functions.invoke(
@@ -37,19 +44,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
       },
     );
 
+
     if (response.data is! Map) {
       throw Exception('Invalid response from the server.');
     }
 
+
     final result = Map<String, dynamic>.from(response.data as Map);
+
 
     if (result['error'] != null) {
       throw Exception(result['error'].toString());
     }
 
+
     final rawOrders = result['orders'];
 
+
     if (rawOrders is! List) return [];
+
 
     return rawOrders
         .whereType<Map>()
@@ -57,15 +70,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
         .toList();
   }
 
+
   Future<void> _refreshOrders() async {
     final future = _loadOrders();
+
 
     setState(() {
       _ordersFuture = future;
     });
 
+
     await future;
   }
+
 
   String _normalize(String value) {
     return value.trim().toLowerCase().replaceAll(
@@ -74,10 +91,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
         );
   }
 
+
   Product? _findProduct(dynamic productId, String name) {
     final id = num.tryParse(
       productId?.toString().trim() ?? '',
     )?.toInt();
+
 
     if (id != null) {
       for (final product in products) {
@@ -85,7 +104,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
       }
     }
 
+
     final target = _normalize(name);
+
 
     if (target.isNotEmpty) {
       for (final product in products) {
@@ -95,15 +116,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
       }
     }
 
+
     return null;
   }
+
 
   List<Map<String, dynamic>> _itemsForOrder(
     Map<String, dynamic> order,
   ) {
     final rawItems = order['items'] ?? order['order_items'];
 
+
     if (rawItems is! List) return [];
+
 
     return rawItems
         .whereType<Map>()
@@ -111,11 +136,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
         .toList();
   }
 
+
   String _orderTitle(
     Map<String, dynamic> order,
     List<Map<String, dynamic>> items,
   ) {
     final names = <String>[];
+
 
     for (final item in items) {
       final saved =
@@ -123,19 +150,23 @@ class _OrdersScreenState extends State<OrdersScreen> {
               .toString()
               .trim();
 
+
       final name = _findProduct(
             item['product_id'],
             saved,
           )?.name ??
           saved;
 
+
       if (name.isNotEmpty && !names.contains(name)) {
         names.add(name);
       }
     }
 
+
     if (names.isEmpty) {
       final saved = (order['product_name'] ?? '').toString().trim();
+
 
       final name = _findProduct(
             order['product_id'],
@@ -143,29 +174,38 @@ class _OrdersScreenState extends State<OrdersScreen> {
           )?.name ??
           saved;
 
+
       if (name.isNotEmpty) names.add(name);
     }
+
 
     if (names.isEmpty) return 'Order';
     if (names.length == 1) return names.first;
 
+
     return '${names.first} +${names.length - 1} more';
   }
+
 
   String _peso(dynamic value) {
     final amount = value is num
         ? value.toDouble()
         : double.tryParse(value?.toString() ?? '') ?? 0.0;
 
+
     return '₱${amount.toStringAsFixed(2)}';
   }
+
 
   String _formatDate(dynamic value) {
     final date = DateTime.tryParse(value?.toString() ?? '');
 
+
     if (date == null) return 'Date unavailable';
 
+
     final local = date.toLocal();
+
 
     return '${local.day.toString().padLeft(2, '0')}/'
         '${local.month.toString().padLeft(2, '0')}/'
@@ -173,6 +213,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         '${local.hour.toString().padLeft(2, '0')}:'
         '${local.minute.toString().padLeft(2, '0')}';
   }
+
 
   Color _statusColor(String status) {
     switch (status.toUpperCase()) {
@@ -186,6 +227,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+
   Widget _productImage(Product? product) {
     const placeholder = Center(
       child: Icon(
@@ -194,6 +236,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         color: Colors.black26,
       ),
     );
+
 
     return Container(
       width: 90,
@@ -215,34 +258,41 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
+
   Widget _buildOrderItem(Map<String, dynamic> item) {
     final savedName =
         (item['product_name'] ?? item['name'] ?? 'Product')
             .toString();
+
 
     final product = _findProduct(
       item['product_id'],
       savedName,
     );
 
+
     final name = product?.name ?? savedName;
     final size = (item['size'] ?? '-').toString();
+
 
     final rawQuantity = item['quantity'];
     final quantity = rawQuantity is num
         ? rawQuantity.toInt()
         : int.tryParse(rawQuantity?.toString() ?? '') ?? 0;
 
+
     final rawPrice = item['unit_price'] ?? item['price'];
     final price = rawPrice is num
         ? rawPrice.toDouble()
         : double.tryParse(rawPrice?.toString() ?? '') ?? 0.0;
+
 
     final rawSubtotal = item['subtotal'];
     final subtotal = rawSubtotal is num
         ? rawSubtotal.toDouble()
         : double.tryParse(rawSubtotal?.toString() ?? '') ??
             price * quantity;
+
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -295,6 +345,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
+
   // CUSTOMER INFORMATION
   Widget _buildCustomerInfo(Map<String, dynamic> order) {
     final name = (order['customer_name'] ?? '').toString().trim();
@@ -308,6 +359,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         (order['shipping_postal_code'] ?? '').toString().trim();
     final notes = (order['shipping_notes'] ?? '').toString().trim();
 
+
     final fullAddress = [
       address,
       city,
@@ -315,8 +367,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
       postal,
     ].where((part) => part.isNotEmpty).join(', ');
 
+
     Widget infoRow(IconData icon, String label, String value) {
       if (value.isEmpty) return const SizedBox.shrink();
+
 
       return Padding(
         padding: const EdgeInsets.only(bottom: 9),
@@ -348,6 +402,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         ),
       );
     }
+
 
     return Container(
       width: double.infinity,
@@ -387,16 +442,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
+
   Widget _buildOrderCard(Map<String, dynamic> order) {
     final items = _itemsForOrder(order);
+
 
     final status = (
       order['payment_status'] ?? order['status'] ?? 'PENDING'
     ).toString();
 
+
     final orderNumber = (
       order['reference_id'] ?? order['order_number'] ?? ''
     ).toString();
+
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -465,6 +524,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ],
           const SizedBox(height: 18),
 
+
           if (items.isEmpty)
             Row(
               children: [
@@ -487,11 +547,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
           else
             ...items.map(_buildOrderItem),
 
+
           const Divider(
             color: Color(0xFFDADADA),
             thickness: 1,
           ),
           const SizedBox(height: 5),
+
 
           Row(
             children: [
@@ -516,7 +578,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ],
           ),
 
+
           const SizedBox(height: 16),
+
 
           // CUSTOMER DETAILS APPEAR HERE
           _buildCustomerInfo(order),
@@ -524,6 +588,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ),
     );
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -555,6 +620,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               child: CircularProgressIndicator(),
             );
           }
+
 
           if (snapshot.hasError) {
             return Center(
@@ -589,7 +655,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
             );
           }
 
+
           final orders = snapshot.data ?? [];
+
 
           if (orders.isEmpty) {
             return Center(
@@ -615,6 +683,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               ),
             );
           }
+
 
           return Center(
             child: ConstrainedBox(

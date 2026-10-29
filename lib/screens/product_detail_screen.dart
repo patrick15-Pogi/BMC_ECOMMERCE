@@ -1,12 +1,14 @@
-
 import 'package:flutter/material.dart';
+
 
 import '../models/product.dart';
 import '../widgets/blvk_footer.dart';
 
+
 class ProductDetailScreen extends StatefulWidget {
   final Product product;
   final void Function(Product product, int quantity, String size) onAddToCart;
+
 
   const ProductDetailScreen({
     super.key,
@@ -14,15 +16,20 @@ class ProductDetailScreen extends StatefulWidget {
     required this.onAddToCart,
   });
 
+
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
 }
+
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
   String selectedSize = 'Medium';
   int quantity = 1;
 
-  // UI only: shows a bigger, zoomable picture of the product.
+
+  static const int maxQuantity = 10;
+
+
   void _openZoom(Product product) {
     showDialog(
       context: context,
@@ -68,9 +75,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     );
   }
 
+
   @override
   Widget build(BuildContext context) {
     final product = widget.product;
+
 
     return Scaffold(
       appBar: AppBar(
@@ -135,7 +144,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
               ),
 
+
               const SizedBox(height: 20),
+
 
               Text(
                 product.name.toUpperCase(),
@@ -147,7 +158,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
               ),
 
+
               const SizedBox(height: 6),
+
 
               Text(
                 peso(product.price),
@@ -158,7 +171,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
               ),
 
+
               const SizedBox(height: 12),
+
 
               Text(
                 product.description,
@@ -169,14 +184,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
               ),
 
+
               const SizedBox(height: 24),
+
 
               const Text(
                 'Size',
                 style: TextStyle(fontWeight: FontWeight.w900),
               ),
 
+
               const SizedBox(height: 8),
+
 
               Wrap(
                 spacing: 8,
@@ -202,7 +221,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 }).toList(),
               ),
 
+
               const SizedBox(height: 20),
+
 
               Row(
                 children: [
@@ -211,7 +232,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     style: TextStyle(fontWeight: FontWeight.w900),
                   ),
 
+
                   const SizedBox(width: 16),
+
 
                   Container(
                     decoration: BoxDecoration(
@@ -232,6 +255,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           icon: const Icon(Icons.remove),
                         ),
 
+
                         Text(
                           '$quantity',
                           style: const TextStyle(
@@ -240,9 +264,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           ),
                         ),
 
+
                         IconButton(
                           visualDensity: VisualDensity.compact,
-                          onPressed: () => setState(() => quantity++),
+                          onPressed: quantity < maxQuantity
+                              ? () => setState(() => quantity++)
+                              : null,
                           icon: const Icon(Icons.add),
                         ),
                       ],
@@ -251,13 +278,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ],
               ),
 
+
               const SizedBox(height: 20),
+
 
               SizedBox(
                 height: 52,
                 child: FilledButton(
                   onPressed: () {
-                    widget.onAddToCart(product, quantity, selectedSize);
+                    widget.onAddToCart(
+                      product,
+                      quantity,
+                      selectedSize,
+                    );
+
 
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -279,7 +313,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
               ),
 
+
               const SizedBox(height: 20),
+
 
               Text(
                 '•  Category: ${product.category}',
@@ -289,9 +325,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
               ),
 
+
               const SizedBox(height: 28),
 
+
               const BlvkFooter(),
+
 
               const SizedBox(height: 28),
             ],

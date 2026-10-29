@@ -1,7 +1,7 @@
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 
 import '../screens/customer_info_screen.dart';
 import '../models/cart_item.dart';
@@ -9,11 +9,13 @@ import '../models/product.dart';
 import '../models/order.dart';
 import '../services/payment_service.dart';
 
+
 class CartScreen extends StatefulWidget {
   final Map<int, CartItem> cart;
   final void Function(int productId, int quantity) onQuantityChanged;
   final void Function(int productId) onRemove;
   final void Function(ShopOrder order) onCheckout;
+
 
   const CartScreen({
     super.key,
@@ -23,36 +25,49 @@ class CartScreen extends StatefulWidget {
     required this.onCheckout,
   });
 
+
   @override
   State<CartScreen> createState() => _CartScreenState();
 }
 
+
 class _CartScreenState extends State<CartScreen> {
+  static const int maxQuantity = 10;
+
+
   final PaymentService _paymentService = PaymentService();
   bool _isCheckingOut = false;
+
 
   int get total => widget.cart.values.fold(
         0,
         (sum, item) => sum + item.subtotal,
       );
 
+
   void _changeQuantity(int productId, int quantity) {
-    widget.onQuantityChanged(productId, quantity);
+    final limitedQuantity = quantity.clamp(1, maxQuantity);
+
+
+    widget.onQuantityChanged(productId, limitedQuantity);
     setState(() {});
   }
+
 
   void _removeItem(int productId) {
     widget.onRemove(productId);
     setState(() {});
   }
 
+
   Future<void> _checkout(List<CartItem> items) async {
     if (_isCheckingOut || items.isEmpty) return;
 
+
     setState(() => _isCheckingOut = true);
 
+
     try {
-      // STEP 1: Ask for customer information first.
       final customerResult =
           await Navigator.of(context).push<Map<String, dynamic>>(
         MaterialPageRoute(
@@ -60,27 +75,25 @@ class _CartScreenState extends State<CartScreen> {
         ),
       );
 
-      if (!mounted) return;
 
-      // Stop checkout if the customer presses Back.
+      if (!mounted) return;
       if (customerResult == null) return;
 
-      // Prevent checkout with an empty cart.
+
       if (items.isEmpty) {
         throw Exception('Your bag is empty.');
       }
 
-      // STEP 2: Prepare cart items.
+
       final itemsPayload = items.map((item) {
         return <String, dynamic>{
           'product_id': item.product.id,
-          'quantity': item.quantity,
+          'quantity': item.quantity.clamp(1, maxQuantity),
           'size': item.size,
         };
       }).toList();
 
-      // STEP 3: Create the order and Xendit invoice.
-      // Customer information is sent to the Edge Function.
+
       final response =
           await Supabase.instance.client.functions.invoke(
         'create-invoice',
@@ -90,26 +103,28 @@ class _CartScreenState extends State<CartScreen> {
         },
       );
 
-      debugPrint(
-        'BLVK checkout response: ${response.data}',
-      );
+
+      debugPrint('BLVK checkout response: ${response.data}');
+
 
       if (response.data is! Map) {
-        throw Exception(
-          'Invalid response from payment server.',
-        );
+        throw Exception('Invalid response from payment server.');
       }
+
 
       final result = Map<String, dynamic>.from(
         response.data as Map,
       );
 
+
       if (result['error'] != null) {
         throw Exception(result['error'].toString());
       }
 
+
       final checkoutUrl = result['checkout_url'] as String?;
       final referenceId = result['reference_id'] as String?;
+
 
       if (checkoutUrl == null ||
           checkoutUrl.isEmpty ||
@@ -120,19 +135,20 @@ class _CartScreenState extends State<CartScreen> {
         );
       }
 
-      // STEP 4: Save order reference on this device.
-      final prefs = await SharedPreferences.getInstance();
 
-      final refs =
-          prefs.getStringList('blvk_order_refs') ?? [];
+      final prefs = await SharedPreferences.getInstance();
+      final refs = prefs.getStringList('blvk_order_refs') ?? [];
+
 
       if (!refs.contains(referenceId)) {
         refs.add(referenceId);
+
 
         final saved = await prefs.setStringList(
           'blvk_order_refs',
           refs,
         );
+
 
         if (!saved) {
           throw Exception(
@@ -141,12 +157,13 @@ class _CartScreenState extends State<CartScreen> {
         }
       }
 
+
       final savedRefs =
           prefs.getStringList('blvk_order_refs') ?? [];
 
-      debugPrint(
-        'BLVK saved order references: $savedRefs',
-      );
+
+      debugPrint('BLVK saved order references: $savedRefs');
+
 
       if (!savedRefs.contains(referenceId)) {
         throw Exception(
@@ -154,12 +171,13 @@ class _CartScreenState extends State<CartScreen> {
         );
       }
 
-      // STEP 5: Open Xendit checkout.
+
       await _paymentService.openCheckout(checkoutUrl);
+
 
       if (!mounted) return;
 
-      // STEP 6: Preserve the existing app callback.
+
       final order = ShopOrder(
         reference: referenceId,
         createdAt: DateTime.now(),
@@ -167,7 +185,7 @@ class _CartScreenState extends State<CartScreen> {
           return OrderItem(
             name: item.product.name,
             price: item.product.price,
-            quantity: item.quantity,
+            quantity: item.quantity.clamp(1, maxQuantity),
             size: item.size,
           );
         }).toList(),
@@ -177,12 +195,15 @@ class _CartScreenState extends State<CartScreen> {
         ),
       );
 
+
       widget.onCheckout(order);
     } catch (error, stackTrace) {
       debugPrint('BLVK CHECKOUT ERROR: $error');
       debugPrintStack(stackTrace: stackTrace);
 
+
       if (!mounted) return;
+
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -197,9 +218,11 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
+
   @override
   Widget build(BuildContext context) {
     final items = widget.cart.values.toList();
+
 
     return Scaffold(
       appBar: AppBar(
@@ -222,17 +245,14 @@ class _CartScreenState extends State<CartScreen> {
           : Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: 640,
-                ),
+                constraints: const BoxConstraints(maxWidth: 640),
                 child: Column(
                   children: [
                     Expanded(
                       child: ListView.separated(
                         padding: const EdgeInsets.all(16),
                         itemCount: items.length,
-                        separatorBuilder: (_, __) =>
-                            const Divider(
+                        separatorBuilder: (_, __) => const Divider(
                           height: 28,
                           color: Colors.black12,
                         ),
@@ -240,9 +260,9 @@ class _CartScreenState extends State<CartScreen> {
                           final item = items[index];
                           final product = item.product;
 
+
                           return Row(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Container(
                                 width: 100,
@@ -298,16 +318,13 @@ class _CartScreenState extends State<CartScreen> {
                                         IconButton(
                                           visualDensity:
                                               VisualDensity.compact,
-                                          onPressed:
-                                              item.quantity > 1
-                                                  ? () => _changeQuantity(
-                                                        product.id,
-                                                        item.quantity - 1,
-                                                      )
-                                                  : null,
-                                          icon: const Icon(
-                                            Icons.remove,
-                                          ),
+                                          onPressed: item.quantity > 1
+                                              ? () => _changeQuantity(
+                                                    product.id,
+                                                    item.quantity - 1,
+                                                  )
+                                              : null,
+                                          icon: const Icon(Icons.remove),
                                         ),
                                         Text(
                                           '${item.quantity}',
@@ -318,14 +335,14 @@ class _CartScreenState extends State<CartScreen> {
                                         IconButton(
                                           visualDensity:
                                               VisualDensity.compact,
-                                          onPressed: () =>
-                                              _changeQuantity(
-                                            product.id,
-                                            item.quantity + 1,
-                                          ),
-                                          icon: const Icon(
-                                            Icons.add,
-                                          ),
+                                          onPressed: item.quantity <
+                                                  maxQuantity
+                                              ? () => _changeQuantity(
+                                                    product.id,
+                                                    item.quantity + 1,
+                                                  )
+                                              : null,
+                                          icon: const Icon(Icons.add),
                                         ),
                                         const Spacer(),
                                         IconButton(
@@ -405,15 +422,13 @@ class _CartScreenState extends State<CartScreen> {
                                   foregroundColor: Colors.white,
                                   disabledBackgroundColor:
                                       const Color(0xFF111111),
-                                  disabledForegroundColor:
-                                      Colors.white,
+                                  disabledForegroundColor: Colors.white,
                                 ),
                                 child: _isCheckingOut
                                     ? const SizedBox(
                                         width: 22,
                                         height: 22,
-                                        child:
-                                            CircularProgressIndicator(
+                                        child: CircularProgressIndicator(
                                           strokeWidth: 2,
                                           color: Colors.white,
                                         ),
