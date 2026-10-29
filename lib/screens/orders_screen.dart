@@ -1,4 +1,6 @@
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/product.dart';
@@ -21,27 +23,61 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _loadOrders() async {
-    final data = await Supabase.instance.client
-        .from('orders')
-        .select('*, order_items(*)')
-        .order('created_at', ascending: false);
+    final prefs = await SharedPreferences.getInstance();
+    final refs = prefs.getStringList('blvk_order_refs') ?? [];
 
-    return List<Map<String, dynamic>>.from(data);
+    if (refs.isEmpty) return [];
+
+    final response =
+        await Supabase.instance.client.functions.invoke(
+      'create-invoice',
+      body: {
+        'action': 'history',
+        'reference_ids': refs,
+      },
+    );
+
+    if (response.data is! Map) {
+      throw Exception('Invalid response from the server.');
+    }
+
+    final result = Map<String, dynamic>.from(response.data as Map);
+
+    if (result['error'] != null) {
+      throw Exception(result['error'].toString());
+    }
+
+    final rawOrders = result['orders'];
+
+    if (rawOrders is! List) return [];
+
+    return rawOrders
+        .whereType<Map>()
+        .map((order) => Map<String, dynamic>.from(order))
+        .toList();
   }
 
   Future<void> _refreshOrders() async {
     final future = _loadOrders();
-    setState(() => _ordersFuture = future);
+
+    setState(() {
+      _ordersFuture = future;
+    });
+
     await future;
   }
 
-  String _normalize(String value) =>
-      value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  String _normalize(String value) {
+    return value.trim().toLowerCase().replaceAll(
+          RegExp(r'\s+'),
+          ' ',
+        );
+  }
 
-  /// Finds the purchased product: by product ID first, then by exact name.
-  /// Returns null when nothing matches (never guesses a different product).
   Product? _findProduct(dynamic productId, String name) {
-    final id = num.tryParse(productId?.toString().trim() ?? '')?.toInt();
+    final id = num.tryParse(
+      productId?.toString().trim() ?? '',
+    )?.toInt();
 
     if (id != null) {
       for (final product in products) {
@@ -50,39 +86,77 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
 
     final target = _normalize(name);
+
     if (target.isNotEmpty) {
       for (final product in products) {
-        if (_normalize(product.name) == target) return product;
+        if (_normalize(product.name) == target) {
+          return product;
+        }
       }
     }
 
     return null;
   }
 
-  /// Title shown at the top of an order card: the purchased product's name
-  /// (plus "+N more" when the order has several items).
-  String _orderTitle(Map<String, dynamic> order, List<Map<String, dynamic>> items) {
+  List<Map<String, dynamic>> _itemsForOrder(
+    Map<String, dynamic> order,
+  ) {
+    final rawItems = order['items'] ?? order['order_items'];
+
+    if (rawItems is! List) return [];
+
+    return rawItems
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  String _orderTitle(
+    Map<String, dynamic> order,
+    List<Map<String, dynamic>> items,
+  ) {
     final names = <String>[];
 
     for (final item in items) {
-      final saved = (item['product_name'] ?? '').toString().trim();
-      final name = _findProduct(item['product_id'], saved)?.name ?? saved;
-      if (name.isNotEmpty) names.add(name);
+      final saved =
+          (item['product_name'] ?? item['name'] ?? '')
+              .toString()
+              .trim();
+
+      final name = _findProduct(
+            item['product_id'],
+            saved,
+          )?.name ??
+          saved;
+
+      if (name.isNotEmpty && !names.contains(name)) {
+        names.add(name);
+      }
     }
 
     if (names.isEmpty) {
       final saved = (order['product_name'] ?? '').toString().trim();
-      final name = _findProduct(order['product_id'], saved)?.name ?? saved;
+
+      final name = _findProduct(
+            order['product_id'],
+            saved,
+          )?.name ??
+          saved;
+
       if (name.isNotEmpty) names.add(name);
     }
 
     if (names.isEmpty) return 'Order';
     if (names.length == 1) return names.first;
+
     return '${names.first} +${names.length - 1} more';
   }
 
   String _peso(dynamic value) {
-    final amount = value is num ? value.toDouble() : 0.0;
+    final amount = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '') ?? 0.0;
+
     return '₱${amount.toStringAsFixed(2)}';
   }
 
@@ -136,8 +210,318 @@ class _OrdersScreenState extends State<OrdersScreen> {
               product.imageAsset,
               fit: BoxFit.contain,
               alignment: Alignment.center,
-              errorBuilder: (context, error, stackTrace) => placeholder,
+              errorBuilder: (_, __, ___) => placeholder,
             ),
+    );
+  }
+
+  Widget _buildOrderItem(Map<String, dynamic> item) {
+    final savedName =
+        (item['product_name'] ?? item['name'] ?? 'Product')
+            .toString();
+
+    final product = _findProduct(
+      item['product_id'],
+      savedName,
+    );
+
+    final name = product?.name ?? savedName;
+    final size = (item['size'] ?? '-').toString();
+
+    final rawQuantity = item['quantity'];
+    final quantity = rawQuantity is num
+        ? rawQuantity.toInt()
+        : int.tryParse(rawQuantity?.toString() ?? '') ?? 0;
+
+    final rawPrice = item['unit_price'] ?? item['price'];
+    final price = rawPrice is num
+        ? rawPrice.toDouble()
+        : double.tryParse(rawPrice?.toString() ?? '') ?? 0.0;
+
+    final rawSubtotal = item['subtotal'];
+    final subtotal = rawSubtotal is num
+        ? rawSubtotal.toDouble()
+        : double.tryParse(rawSubtotal?.toString() ?? '') ??
+            price * quantity;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _productImage(product),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'Size: $size',
+                  style: const TextStyle(color: Colors.black54),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Quantity: $quantity',
+                  style: const TextStyle(color: Colors.black54),
+                ),
+                if ((item['color'] ?? '').toString().isNotEmpty)
+                  Text(
+                    'Color: ${item['color']}',
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _peso(subtotal),
+            style: const TextStyle(
+              color: Colors.black,
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // CUSTOMER INFORMATION
+  Widget _buildCustomerInfo(Map<String, dynamic> order) {
+    final name = (order['customer_name'] ?? '').toString().trim();
+    final email = (order['customer_email'] ?? '').toString().trim();
+    final phone = (order['customer_phone'] ?? '').toString().trim();
+    final address = (order['shipping_address'] ?? '').toString().trim();
+    final city = (order['shipping_city'] ?? '').toString().trim();
+    final province =
+        (order['shipping_province'] ?? '').toString().trim();
+    final postal =
+        (order['shipping_postal_code'] ?? '').toString().trim();
+    final notes = (order['shipping_notes'] ?? '').toString().trim();
+
+    final fullAddress = [
+      address,
+      city,
+      province,
+      postal,
+    ].where((part) => part.isNotEmpty).join(', ');
+
+    Widget infoRow(IconData icon, String label, String value) {
+      if (value.isEmpty) return const SizedBox.shrink();
+
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 9),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 17, color: Colors.black54),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '$label: ',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black,
+                      ),
+                    ),
+                    TextSpan(
+                      text: value,
+                      style: const TextStyle(color: Colors.black87),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE0E0E0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.local_shipping_outlined, size: 19),
+              SizedBox(width: 8),
+              Text(
+                'CUSTOMER INFORMATION',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          infoRow(Icons.person_outline, 'Customer',
+              name.isEmpty ? 'N/A' : name),
+          infoRow(Icons.email_outlined, 'Email', email),
+          infoRow(Icons.phone_outlined, 'Contact', phone),
+          infoRow(Icons.location_on_outlined, 'Address',
+              fullAddress),
+          infoRow(Icons.notes_outlined, 'Delivery notes', notes),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrderCard(Map<String, dynamic> order) {
+    final items = _itemsForOrder(order);
+
+    final status = (
+      order['payment_status'] ?? order['status'] ?? 'PENDING'
+    ).toString();
+
+    final orderNumber = (
+      order['reference_id'] ?? order['order_number'] ?? ''
+    ).toString();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(
+          color: const Color(0xFF171717),
+          width: 1.3,
+        ),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  _orderTitle(order, items),
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 13,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: _statusColor(status),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  status.toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            _formatDate(order['created_at']),
+            style: const TextStyle(
+              color: Colors.black54,
+              fontSize: 13,
+            ),
+          ),
+          if (orderNumber.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Order ID: $orderNumber',
+              style: const TextStyle(
+                color: Colors.black54,
+                fontSize: 12,
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+
+          if (items.isEmpty)
+            Row(
+              children: [
+                _productImage(
+                  _findProduct(
+                    order['product_id'],
+                    (order['product_name'] ?? '').toString(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    (order['product_name'] ?? 'No order items found')
+                        .toString(),
+                    style: const TextStyle(color: Colors.black),
+                  ),
+                ),
+              ],
+            )
+          else
+            ...items.map(_buildOrderItem),
+
+          const Divider(
+            color: Color(0xFFDADADA),
+            thickness: 1,
+          ),
+          const SizedBox(height: 5),
+
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Total',
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              Text(
+                _peso(order['amount'] ?? order['subtotal']),
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // CUSTOMER DETAILS APPEAR HERE
+          _buildCustomerInfo(order),
+        ],
+      ),
     );
   }
 
@@ -208,8 +592,27 @@ class _OrdersScreenState extends State<OrdersScreen> {
           final orders = snapshot.data ?? [];
 
           if (orders.isEmpty) {
-            return const Center(
-              child: Text('No orders yet.'),
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.receipt_long_outlined,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('No orders yet on this device.'),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _refreshOrders,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('REFRESH'),
+                    ),
+                  ],
+                ),
+              ),
             );
           }
 
@@ -224,207 +627,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   separatorBuilder: (_, __) =>
                       const SizedBox(height: 14),
                   itemBuilder: (context, index) {
-                    final order = orders[index];
-
-                    final items = List<Map<String, dynamic>>.from(
-                      order['order_items'] ?? [],
-                    );
-
-                    final status =
-                        (order['payment_status'] ?? 'PENDING')
-                            .toString();
-
-                    return Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border.all(
-                          color: const Color(0xFF171717),
-                          width: 1.3,
-                        ),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _orderTitle(order, items),
-                                  style: const TextStyle(
-                                    color: Colors.black,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 13,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _statusColor(status),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  status.toUpperCase(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            _formatDate(order['created_at']),
-                            style: const TextStyle(
-                              color: Colors.black54,
-                              fontSize: 13,
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-
-                          if (items.isEmpty)
-                            Builder(builder: (context) {
-                              final fallbackName =
-                                  (order['product_name'] ?? '').toString();
-                              final fallbackProduct = _findProduct(
-                                order['product_id'],
-                                fallbackName,
-                              );
-
-                              return Row(
-                                children: [
-                                  _productImage(fallbackProduct),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      fallbackName.isEmpty
-                                          ? 'No order items found'
-                                          : fallbackName,
-                                      style: const TextStyle(
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            })
-                          else
-                            ...items.map((item) {
-                              final savedName =
-                                  (item['product_name'] ?? 'Product')
-                                      .toString();
-
-                              final product = _findProduct(
-                                item['product_id'],
-                                savedName,
-                              );
-
-                              // Name from the products table (by product ID).
-                              final name = product?.name ?? savedName;
-
-                              final size =
-                                  (item['size'] ?? '-').toString();
-
-                              final quantity =
-                                  (item['quantity'] as num?)?.toInt() ?? 0;
-
-                              final subtotal = item['subtotal'] ??
-                                  ((item['price'] as num? ?? 0) *
-                                      quantity);
-
-                              return Padding(
-                                padding: const EdgeInsets.only(
-                                  bottom: 14,
-                                ),
-                                child: Row(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
-                                  children: [
-                                    _productImage(product),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            name,
-                                            style: const TextStyle(
-                                              color: Colors.black,
-                                              fontWeight: FontWeight.w900,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 5),
-                                          Text(
-                                            'Size: $size',
-                                            style: const TextStyle(
-                                              color: Colors.black54,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            'Quantity: $quantity',
-                                            style: const TextStyle(
-                                              color: Colors.black54,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      _peso(subtotal),
-                                      style: const TextStyle(
-                                        color: Colors.black,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }),
-
-                          const Divider(
-                            color: Color(0xFFDADADA),
-                            thickness: 1,
-                          ),
-                          const SizedBox(height: 5),
-                          Row(
-                            children: [
-                              const Expanded(
-                                child: Text(
-                                  'Total',
-                                  style: TextStyle(
-                                    color: Colors.black,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                              ),
-                              Text(
-                                _peso(order['amount']),
-                                style: const TextStyle(
-                                  color: Colors.black,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    );
+                    return _buildOrderCard(orders[index]);
                   },
                 ),
               ),

@@ -1,4 +1,9 @@
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../screens/customer_info_screen.dart';
 import '../models/cart_item.dart';
 import '../models/product.dart';
 import '../models/order.dart';
@@ -33,12 +38,12 @@ class _CartScreenState extends State<CartScreen> {
 
   void _changeQuantity(int productId, int quantity) {
     widget.onQuantityChanged(productId, quantity);
-    setState(() {}); // redraw the bag right away
+    setState(() {});
   }
 
   void _removeItem(int productId) {
     widget.onRemove(productId);
-    setState(() {}); // redraw the bag right away
+    setState(() {});
   }
 
   Future<void> _checkout(List<CartItem> items) async {
@@ -47,22 +52,116 @@ class _CartScreenState extends State<CartScreen> {
     setState(() => _isCheckingOut = true);
 
     try {
-      final checkoutUrl = await _paymentService.createCheckout(
-        items: items.map((item) {
-          return <String, dynamic>{
-            'product_id': item.product.id,
-            'quantity': item.quantity,
-            'size': item.size,
-          };
-        }).toList(),
+      // STEP 1: Ask for customer information first.
+      final customerResult =
+          await Navigator.of(context).push<Map<String, dynamic>>(
+        MaterialPageRoute(
+          builder: (_) => const CustomerInfoScreen(),
+        ),
       );
 
+      if (!mounted) return;
+
+      // Stop checkout if the customer presses Back.
+      if (customerResult == null) return;
+
+      // Prevent checkout with an empty cart.
+      if (items.isEmpty) {
+        throw Exception('Your bag is empty.');
+      }
+
+      // STEP 2: Prepare cart items.
+      final itemsPayload = items.map((item) {
+        return <String, dynamic>{
+          'product_id': item.product.id,
+          'quantity': item.quantity,
+          'size': item.size,
+        };
+      }).toList();
+
+      // STEP 3: Create the order and Xendit invoice.
+      // Customer information is sent to the Edge Function.
+      final response =
+          await Supabase.instance.client.functions.invoke(
+        'create-invoice',
+        body: {
+          'items': itemsPayload,
+          'customer': customerResult,
+        },
+      );
+
+      debugPrint(
+        'BLVK checkout response: ${response.data}',
+      );
+
+      if (response.data is! Map) {
+        throw Exception(
+          'Invalid response from payment server.',
+        );
+      }
+
+      final result = Map<String, dynamic>.from(
+        response.data as Map,
+      );
+
+      if (result['error'] != null) {
+        throw Exception(result['error'].toString());
+      }
+
+      final checkoutUrl = result['checkout_url'] as String?;
+      final referenceId = result['reference_id'] as String?;
+
+      if (checkoutUrl == null ||
+          checkoutUrl.isEmpty ||
+          referenceId == null ||
+          referenceId.isEmpty) {
+        throw Exception(
+          'Checkout URL or order reference was not returned.',
+        );
+      }
+
+      // STEP 4: Save order reference on this device.
+      final prefs = await SharedPreferences.getInstance();
+
+      final refs =
+          prefs.getStringList('blvk_order_refs') ?? [];
+
+      if (!refs.contains(referenceId)) {
+        refs.add(referenceId);
+
+        final saved = await prefs.setStringList(
+          'blvk_order_refs',
+          refs,
+        );
+
+        if (!saved) {
+          throw Exception(
+            'Order reference could not be saved on this device.',
+          );
+        }
+      }
+
+      final savedRefs =
+          prefs.getStringList('blvk_order_refs') ?? [];
+
+      debugPrint(
+        'BLVK saved order references: $savedRefs',
+      );
+
+      if (!savedRefs.contains(referenceId)) {
+        throw Exception(
+          'Order reference was not saved. Please try again.',
+        );
+      }
+
+      // STEP 5: Open Xendit checkout.
       await _paymentService.openCheckout(checkoutUrl);
 
       if (!mounted) return;
 
+      // STEP 6: Preserve the existing app callback.
       final order = ShopOrder(
-        reference: 'BLVK-${DateTime.now().millisecondsSinceEpoch}',
+        reference: referenceId,
         createdAt: DateTime.now(),
         items: items.map((item) {
           return OrderItem(
@@ -72,17 +171,23 @@ class _CartScreenState extends State<CartScreen> {
             size: item.size,
           );
         }).toList(),
-        total: total,
+        total: items.fold(
+          0,
+          (sum, item) => sum + item.subtotal,
+        ),
       );
 
       widget.onCheckout(order);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      debugPrint('BLVK CHECKOUT ERROR: $error');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Checkout failed: $error'),
-          duration: const Duration(seconds: 6),
+          duration: const Duration(seconds: 10),
         ),
       );
     } finally {
@@ -97,13 +202,18 @@ class _CartScreenState extends State<CartScreen> {
     final items = widget.cart.values.toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('YOUR BAG')),
+      appBar: AppBar(
+        title: const Text('YOUR BAG'),
+      ),
       body: items.isEmpty
           ? const Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.shopping_bag_outlined, size: 58),
+                  Icon(
+                    Icons.shopping_bag_outlined,
+                    size: 58,
+                  ),
                   SizedBox(height: 12),
                   Text('Your bag is empty.'),
                 ],
@@ -112,15 +222,17 @@ class _CartScreenState extends State<CartScreen> {
           : Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
-                // Keeps the cart centered on wide screens.
-                constraints: const BoxConstraints(maxWidth: 640),
+                constraints: const BoxConstraints(
+                  maxWidth: 640,
+                ),
                 child: Column(
                   children: [
                     Expanded(
                       child: ListView.separated(
                         padding: const EdgeInsets.all(16),
                         itemCount: items.length,
-                        separatorBuilder: (_, __) => const Divider(
+                        separatorBuilder: (_, __) =>
+                            const Divider(
                           height: 28,
                           color: Colors.black12,
                         ),
@@ -129,9 +241,9 @@ class _CartScreenState extends State<CartScreen> {
                           final product = item.product;
 
                           return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
                             children: [
-                              // Bordered box, image centered and fitted.
                               Container(
                                 width: 100,
                                 height: 120,
@@ -148,7 +260,8 @@ class _CartScreenState extends State<CartScreen> {
                                     product.imageAsset,
                                     fit: BoxFit.contain,
                                     alignment: Alignment.center,
-                                    errorBuilder: (_, __, ___) => const Icon(
+                                    errorBuilder: (_, __, ___) =>
+                                        const Icon(
                                       Icons.checkroom,
                                       color: Colors.black26,
                                     ),
@@ -158,7 +271,8 @@ class _CartScreenState extends State<CartScreen> {
                               const SizedBox(width: 14),
                               Expanded(
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       product.name,
@@ -184,13 +298,16 @@ class _CartScreenState extends State<CartScreen> {
                                         IconButton(
                                           visualDensity:
                                               VisualDensity.compact,
-                                          onPressed: item.quantity > 1
-                                              ? () => _changeQuantity(
-                                                    product.id,
-                                                    item.quantity - 1,
-                                                  )
-                                              : null,
-                                          icon: const Icon(Icons.remove),
+                                          onPressed:
+                                              item.quantity > 1
+                                                  ? () => _changeQuantity(
+                                                        product.id,
+                                                        item.quantity - 1,
+                                                      )
+                                                  : null,
+                                          icon: const Icon(
+                                            Icons.remove,
+                                          ),
                                         ),
                                         Text(
                                           '${item.quantity}',
@@ -206,7 +323,9 @@ class _CartScreenState extends State<CartScreen> {
                                             product.id,
                                             item.quantity + 1,
                                           ),
-                                          icon: const Icon(Icons.add),
+                                          icon: const Icon(
+                                            Icons.add,
+                                          ),
                                         ),
                                         const Spacer(),
                                         IconButton(
@@ -240,7 +359,10 @@ class _CartScreenState extends State<CartScreen> {
                       decoration: const BoxDecoration(
                         color: Colors.white,
                         border: Border(
-                          top: BorderSide(color: Color(0xFF111111), width: 1.5),
+                          top: BorderSide(
+                            color: Color(0xFF111111),
+                            width: 1.5,
+                          ),
                         ),
                       ),
                       child: SafeArea(
@@ -274,20 +396,24 @@ class _CartScreenState extends State<CartScreen> {
                               child: FilledButton(
                                 onPressed: _isCheckingOut
                                     ? null
-                                    : () => _checkout(items),
+                                    : () => _checkout(
+                                          List<CartItem>.of(items),
+                                        ),
                                 style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFF111111),
+                                  backgroundColor:
+                                      const Color(0xFF111111),
                                   foregroundColor: Colors.white,
-                                  // Keep the button black while loading.
                                   disabledBackgroundColor:
                                       const Color(0xFF111111),
-                                  disabledForegroundColor: Colors.white,
+                                  disabledForegroundColor:
+                                      Colors.white,
                                 ),
                                 child: _isCheckingOut
                                     ? const SizedBox(
                                         width: 22,
                                         height: 22,
-                                        child: CircularProgressIndicator(
+                                        child:
+                                            CircularProgressIndicator(
                                           strokeWidth: 2,
                                           color: Colors.white,
                                         ),
